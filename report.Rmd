@@ -1,16 +1,16 @@
 ---
-title: "Bank Marketing"
+title: "Bank Marketing: Subscription of Term Deposits"
 author: "Danilo Ferreira de Oliveira"
-date: "06/04/2021"
+date: "07/22/2021"
 output: 
   pdf_document:
-    #citation_package: natbib
+    citation_package: natbib
     highlight: tango
     latex_engine: xelatex
     number_sections: true
     toc: true
     toc_depth: 3
-#bibliography: bibliography.bib
+bibliography: bibliography.bib
 urlcolor: blue
 ---
 
@@ -78,7 +78,7 @@ The data utilized in this project is related to direct marketing campaigns of a 
 
 ## Objective
 
-The purpose of this report is to train a model that can accurately predict whether or not clients will subscribe or not to a term deposit. The metric that we will use to evaluate trained models will be the AUC Score. 
+The purpose of this report is to train a model that can accurately predict whether or not clients will subscribe or not to a term deposit. The metric that we will use to evaluate trained models will be the AUC Score. The intelectual basis of this report is @rafalab.
 
 # Analysis
 
@@ -92,9 +92,10 @@ library(dplyr)
 library(caret)
 library(corrplot)
 library(pROC)
+library(kableExtra)
 ```
 
-From all of four options available in [UCI's Machine Learning Repo Database](https://archive.ics.uci.edu/ml/machine-learning-databases/00222/), we will utilize _bank-additional-full.csv_, which contains all examples (41188) and 20 inputs, ordered by date (from May 2008 to November 2010), very close to the data analyzed in [Moro et al., 2014].
+From all of four options available in [UCI's Machine Learning Repo Database](https://archive.ics.uci.edu/ml/machine-learning-databases/00222/), we will utilize _bank-additional-full.csv_, which contains all examples (41188) and 20 inputs, ordered by date (from May 2008 to November 2010), very close to the data analyzed in [@dda-marketing].
 
 ```{r head}
 bank_full <- read.csv('bank-additional-full.csv', sep = ';')
@@ -151,7 +152,7 @@ bank_full <- bank_full %>% select(-duration)
 
 ## Age
 
-Analyzing age, we can see that it is very difficult for older people to not subscribe to a term deposit, as seen in Figure .
+Analyzing age, we can see that it is very difficult for older people to not subscribe to a term deposit, as seen in Figure 4.
 
 ```{r age, fig.align='center', fig.height=3, fig.cap='Distribution of ages given the acceptance or not of term deposits ' }
 bank_full %>% ggplot(aes(age)) + facet_grid("y", scales='free') + 
@@ -163,9 +164,9 @@ bank_full %>% ggplot(aes(age)) + facet_grid("y", scales='free') +
 
 ## Day of week
 
-The day of the week which occurs the contact does not alter the shape of the distribution for `yes` or `no` values.
+The day of the week which occurs the contact does not alter the shape of the distribution for `yes` or `no` values, as seen in Figure 5.
 
-```{r day-of-week, fig.align='center', fig.height=3, fig.cap='Distribution of contact day of week, given the acceptance or not of term deposits '}
+```{r day-of-week, fig.align='center', fig.height=4, fig.cap='Distribution of contact day of week, given the acceptance or not of term deposits '}
 bank_full$day_of_week <- factor(bank_full$day_of_week, 
                                 levels=c("mon", "tue", "wed", "thu", "fri"))
 bank_full %>% ggplot(aes(day_of_week)) + facet_grid("y", scales='free') + 
@@ -182,12 +183,12 @@ bank_full %>% filter(marital=="unknown") %>% group_by(y) %>% summarize(n())
 
 ## Education
 
-```{r, fig.align='center', fig.height=3, fig.cap='Distribution of education levels given the acceptance or not of term deposits '}
+```{r, fig.align='center', fig.height=4, fig.cap='Distribution of education levels given the acceptance or not of term deposits '}
 bank_full %>% ggplot(aes(education)) + facet_grid("y", scales='free') + geom_bar() + 
   theme(axis.text.x = element_text(angle=45))
 ```
 
-By analyzing the plot above, we see that there is very little people in this dataset that is considered illiterate, so maybe it is best to include this category into the `unknown` one. 
+By analyzing the plot presented in Figure 6 above, we see that there is very little people in this dataset that is considered illiterate, so maybe it is best to include this category into the `unknown` one. 
 
 ```{r}
 bank_full %>% filter(education=="illiterate") %>% group_by(y) %>% summarize(n())
@@ -201,7 +202,7 @@ bank_full$education[bank_full$education == "illiterate"] <- "unknown"
 
 In the case of this variable, it is possible to see that almost nobody has credit in default, so this is probably a variable that we can discard. 
 
-```{r, fig.align='center', fig.height=3, fig.cap='Count of people that have credit in default'}
+```{r, fig.align='center', fig.height=4, fig.cap='Count of people that have credit in default'}
 bank_full %>% ggplot(aes(default)) + geom_bar()
 bank_full[which(bank_full$default=="yes"),] # should we drop it? lots of unknown and little yeses
 
@@ -244,7 +245,7 @@ bank_full %>% filter(previous==0) %>% dim() %>% .[1]/dim(bank_full)[1]
 
 ## Chi-square test
 
-We use chi-square tests to check if the distribution of the numeric variables is approximately normal. We checked all of them, but with the purpose of making this report shorter, we show only the ones that failed the hypothesis.
+We use chi-square tests to check if the distribution of the numeric variables is approximately normal. We checked all of them, but with the purpose of making this report shorter, we show only the ones that checks our hypothesis that there is no dependent relation between them and our target variable.
 
 ```{r}
 chisq.test(bank_full$y, bank_full$housing, correct=FALSE)
@@ -252,9 +253,11 @@ chisq.test(bank_full$y, bank_full$housing, correct=FALSE)
 chisq.test(bank_full$y, bank_full$loan, correct=FALSE)
 ```
 
-Both these variables have _p-value_ higher than 0.05, which was our threshold.
+Both these variables have _p-value_ higher than 0.05, which was our threshold. So for the purpose of this report, we will drop these variables before training our models.
 
 ## Selected and treated data for modeling
+
+Below is the treatment and selection of variables utilized in our models' training. 
 
 ```{r, warning=FALSE, message=FALSE, warning=FALSE}
 bank_full_2 <- bank_full %>% 
@@ -266,6 +269,8 @@ bank_full_2 <- bank_full %>%
 ```
 
 # Results
+
+Before training our model, we must first set a seed to guarantee code reproducibility, and then we create training and test partitions in a 70-30% distribution.
 
 ```{r}
 set.seed(123, sample.kind = "Rounding")
@@ -281,9 +286,12 @@ To make training possible, we turn the y variable to factors.
 train <- train %>% mutate(y = as.factor(y))
 ```
 
-In this section, we will train three different models: Random Forest, Generalized Bossted Regression Modeling and Logistic Regression.
+In this section, we will train three different models: Random Forest, Generalized Boosted Regression Modeling and Logistic Regression.
 
 ## Random Forest
+
+Random forests are an ensemble learning method that can be utilized for classification, which we will need to perform in this report. Applying this method, we get the following AUC Score result:
+
 ```{r, warning=FALSE, message=FALSE}
 ctrl <- trainControl(method = "cv",number=5, classProbs = TRUE, summaryFunction = twoClassSummary)
 set.seed(123, sample.kind = "Rounding")
@@ -299,12 +307,16 @@ roc_rf$auc
 ```
 
 ```{r, echo=FALSE}
+auc_results <- tibble(Method = "Random Forest", AUC = 0.7406)
+kbl(auc_results, booktabs = TRUE, caption = 'AUC Score result for Random Forest Model') %>%  kable_styling(latex_options = c("striped","HOLD_position"))
 rm(rf_pred,roc_rf,fit_rf)
 ```
 
 
 
 ## Generalized Boosted Regression Modeling
+
+Boosting is a form of ensemble model, that performs training sequentially. We will use a boosted Regression model to train this next model and obtain AUC Score results.
 
 ```{r, warning=FALSE, message=FALSE}
 set.seed(123, sample.kind = "Rounding")
@@ -320,12 +332,20 @@ roc_gbm <- roc(response=as.ordered(gbm_pred), predictor=as.ordered(test$y), auc=
 roc_gbm$auc
 ```
 
+We had some improvement from the first model to this one, but it can still get better.
+
 ```{r, echo=FALSE}
+auc_results <- bind_rows(auc_results,
+                          tibble(Method="Generalized Boosted Regression Model",  
+                                 AUC = 0.7802))
+kbl(auc_results, booktabs = TRUE, caption = 'AUC results for Random Forest and GBM') %>%  kable_styling(latex_options = c("striped","HOLD_position"))
 rm(fit_gbm,gbm_pred,roc_gbm)
 ```
 
 
 ## Logistic Regression
+
+Logistic Regression can be used to train models in both classification and regression, but it is mostly utilized in classification. We will now perform training and gather predictions, to compare results with our test set.
 
 ```{r, warning=FALSE, message=FALSE}
 set.seed(123, sample.kind = "Rounding")
@@ -338,16 +358,21 @@ roc_glm <- roc(response=as.ordered(predicted.classes), predictor=as.ordered(test
 roc_glm$auc
 ```
 
+We find that the best model results we obtain is the Logistic Regression one, with a AUC Score of 0.79.
+
 ```{r, echo=FALSE}
+auc_results <- bind_rows(auc_results,
+                          tibble(Method="Generalized Boosted Regression Model",  
+                                 AUC = 0.79))
+kbl(auc_results, booktabs = TRUE, caption = 'AUC results for Random Forest, GBM and Logistic Regression') %>%  kable_styling(latex_options = c("striped","HOLD_position"))
 rm(model,probabilities,predicted.classes,roc_glm)
 ```
 
 
 # Conclusion
 
+We first analyzed correlations and variable quality, such as `pdays` and `previous`, which were pretty much the same and almost in its entirety equal to one values, for example. We also treated values that were almost null (_illiterate_ in `education`), and selected the ones which we thought were the best ones for training our models.
 
-
-mama
-
+We trained three models and compared their AUC Scores, getting to the conclusion that the best one was the logistic regression model, with a AUC Score of 0.79, which is pretty good.
 
 
