@@ -1,6 +1,6 @@
 # bank-marketing
 
-Term Deposits Subscription Analysis for a Portuguese Bank
+## Term Deposits Subscription Analysis for a Portuguese Bank
 
 
 * code.R           - File containing all R script,
