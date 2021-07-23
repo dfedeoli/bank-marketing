@@ -1,0 +1,353 @@
+---
+title: "Bank Marketing"
+author: "Danilo Ferreira de Oliveira"
+date: "06/04/2021"
+output: 
+  pdf_document:
+    #citation_package: natbib
+    highlight: tango
+    latex_engine: xelatex
+    number_sections: true
+    toc: true
+    toc_depth: 3
+#bibliography: bibliography.bib
+urlcolor: blue
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE, comment = '>>>', tidy = TRUE)
+```
+
+# Introduction
+
+The data utilized in this project is related to direct marketing campaigns of a Portuguese banking institution, and it's available in [UCI's Machine Learning Repository](https://archive.ics.uci.edu/ml/datasets/Bank+Marketing). The marketing campaigns were based on phone calls. Often, more than one contact to the same client was required, in order to access if the product (bank term deposit) would be ("yes") or not ("no") subscribed.
+
+## Dataset description: Input variables
+
+> Bank client data:
+
+* age (numeric)
+
+* job: type of job (categorical: _admin._, _blue-collar_, _entrepreneur_, _housemaid_, _management_, _retired_, _self-employed_, _services_, _student_, _technician_, _unemployed_, _unknown_)
+
+* marital: marital status (categorical: _divorced_, _married_, _single_, _unknown_; note: _divorced_ means divorced or widowed)
+
+* education (categorical: _basic.4y_, _basic.6y_, _basic.9y_, _high.school_, _illiterate_, _professional.course_, _university.degree_, _unknown_)
+
+* default: has credit in default? (categorical: _no_, _yes_, _unknown_)
+
+* housing: has housing loan? (categorical: _no_, _yes_, _unknown_)
+
+* loan: has personal loan? (categorical: _no_, _yes_, _unknown_)
+
+> Related with the last contact of the current campaign:
+
+* contact: contact communication type (categorical: _cellular_, _telephone_)
+
+* month: last contact month of year (categorical: _jan_, _feb_, _mar_, ..., _nov_, _dec_)
+
+* day_of_week: last contact day of the week (categorical: _mon_, _tue_, _wed_, _thu_, _fri_)
+
+* duration: last contact duration, in seconds (numeric).
+
+> Other attributes:
+
+* campaign: number of contacts performed during this campaign and for this client (numeric, includes last contact)
+
+* pdays: number of days that passed by after the client was last contacted from a previous campaign (numeric; 999 means client was not previously contacted)
+
+* previous: number of contacts performed before this campaign and for this client (numeric)
+
+* poutcome: outcome of the previous marketing campaign (categorical: _failure_, _nonexistent_, _success_)
+
+> Social and economic context attributes:
+
+* emp.var.rate: employment variation rate - quarterly indicator (numeric)
+
+* cons.price.idx: consumer price index - monthly indicator (numeric)
+
+* cons.conf.idx: consumer confidence index - monthly indicator (numeric)
+
+* euribor3m: euribor 3 month rate - daily indicator (numeric) Euribor rates are based on the interest rates at which a panel of European banks borrow funds from one another
+
+* nr.employed: number of employees - quarterly indicator (numeric)
+
+> Output variable (desired target):
+
+* y - has the client subscribed a term deposit? (binary: _yes_, _no_)
+
+## Objective
+
+The purpose of this report is to train a model that can accurately predict whether or not clients will subscribe or not to a term deposit. The metric that we will use to evaluate trained models will be the AUC Score. 
+
+# Analysis
+
+Firstly, we must import the libraries we are going to use:
+
+```{r libraries, warning=FALSE,message=FALSE}
+library(skimr)
+library(ggplot2)
+library(tidyverse)
+library(dplyr)
+library(caret)
+library(corrplot)
+library(pROC)
+```
+
+From all of four options available in [UCI's Machine Learning Repo Database](https://archive.ics.uci.edu/ml/machine-learning-databases/00222/), we will utilize _bank-additional-full.csv_, which contains all examples (41188) and 20 inputs, ordered by date (from May 2008 to November 2010), very close to the data analyzed in [Moro et al., 2014].
+
+```{r head}
+bank_full <- read.csv('bank-additional-full.csv', sep = ';')
+bank_full %>% as_tibble()
+```
+
+ There are `r sum(duplicated(bank_full))` duplicated rows, which we eliminate by doing the following:
+
+```{r remov-dup}
+idx <- which(duplicated(bank_full)==TRUE)
+bank_full <- bank_full[-idx,]
+rm(idx)
+```
+
+We then check the distribution of people that did and did not subscribe to a term deposit, shown in Figure 1.
+
+```{r target, fig.height=3, fig.fullwidth=TRUE, fig.align='center', fig.cap = "Target value distribution"}
+bank_full %>% ggplot(aes(y)) + geom_bar()
+```
+
+## Correlation matrix
+
+We now check the correlation between numeric variables using two different functions/visualizations in R.First we utilize the function `corrplot` and obtain the results presented in Figure 2:
+
+```{r correlation, fig.align='center', fig.height=3, fig.cap='Numeric variables correlation matrix ', warning=FALSE, message=FALSE}
+library("Hmisc")
+num_bank_full <- bank_full %>% select(age, campaign, pdays, previous, emp.var.rate, 
+                                      cons.price.idx, cons.conf.idx, euribor3m, 
+                                      nr.employed)
+res <- rcorr(as.matrix(num_bank_full))
+corrplot(res$r, type = "lower",tl.col = "black", tl.srt = 45)
+```
+
+The second type of visualization is the heat map, which we can see in Figure 3.
+
+```{r heatmap, fig.align='center', fig.height=3, fig.cap='Correlation heat map'}
+heatmap(res$r,symm = TRUE)
+```
+
+Analyzing both graphs, we can see high correlations between variables `emp.var.rate`, `nr.employed` and `euribor3m`. The first two are not only correlated but there is cause, since one is the employment variation rate and the other is the number of employees.
+
+```{r unload-clean, echo=FALSE}
+detach("package:Hmisc", unload = TRUE)
+rm(res,num_bank_full)
+```
+
+## Variable `duration`
+
+This attribute highly affects the output target (e.g., if duration = 0 then y = _no_). Yet, the duration is not known before a call is performed. Also, after the end of the call y is obviously known. Thus, this input should only be included for benchmark purposes and should be discarded if the intention is to have a realistic predictive model.
+
+```{r duration}
+bank_full <- bank_full %>% select(-duration)
+```
+
+## Age
+
+Analyzing age, we can see that it is very difficult for older people to not subscribe to a term deposit, as seen in Figure .
+
+```{r age, fig.align='center', fig.height=3, fig.cap='Distribution of ages given the acceptance or not of term deposits ' }
+bank_full %>% ggplot(aes(age)) + facet_grid("y", scales='free') + 
+  geom_histogram(color='black', bins=35) +
+  theme(axis.text.x = element_text(angle=45))
+```
+
+
+
+## Day of week
+
+The day of the week which occurs the contact does not alter the shape of the distribution for `yes` or `no` values.
+
+```{r day-of-week, fig.align='center', fig.height=3, fig.cap='Distribution of contact day of week, given the acceptance or not of term deposits '}
+bank_full$day_of_week <- factor(bank_full$day_of_week, 
+                                levels=c("mon", "tue", "wed", "thu", "fri"))
+bank_full %>% ggplot(aes(day_of_week)) + facet_grid("y", scales='free') + 
+  geom_bar() + theme(axis.text.x = element_text(angle=45))
+```
+
+
+## Marital status
+
+
+```{r marital}
+bank_full %>% filter(marital=="unknown") %>% group_by(y) %>% summarize(n())
+```
+
+## Education
+
+```{r, fig.align='center', fig.height=3, fig.cap='Distribution of education levels given the acceptance or not of term deposits '}
+bank_full %>% ggplot(aes(education)) + facet_grid("y", scales='free') + geom_bar() + 
+  theme(axis.text.x = element_text(angle=45))
+```
+
+By analyzing the plot above, we see that there is very little people in this dataset that is considered illiterate, so maybe it is best to include this category into the `unknown` one. 
+
+```{r}
+bank_full %>% filter(education=="illiterate") %>% group_by(y) %>% summarize(n())
+```
+
+```{r}
+bank_full$education[bank_full$education == "illiterate"] <- "unknown"
+```
+
+## Default
+
+In the case of this variable, it is possible to see that almost nobody has credit in default, so this is probably a variable that we can discard. 
+
+```{r, fig.align='center', fig.height=3, fig.cap='Count of people that have credit in default'}
+bank_full %>% ggplot(aes(default)) + geom_bar()
+bank_full[which(bank_full$default=="yes"),] # should we drop it? lots of unknown and little yeses
+
+```
+
+
+```{r, fig.align='center', fig.height=3, fig.cap='Distribution of people that have credit in default given the acceptance or not of term deposits'}
+bank_full %>% ggplot(aes(default)) + facet_grid("y", scales='free') + geom_bar() + 
+  theme(axis.text.x = element_text(angle=45))
+```
+
+
+## pdays
+
+This variable represents of days that passed by after the client was last contacted from a previous campaign. When its value is 999, it means that they were not previously contacted. Let's see the distribution of the ones that were:
+
+```{r, fig.align='center', fig.height=3, fig.cap='Distribution of days that have passed by since last contact'}
+contacted_before <- bank_full %>% filter(pdays<999) %>% select(pdays)
+contacted_before %>% ggplot(aes(pdays)) + geom_histogram(bins=15, color='black')
+
+```
+
+```{r, echo=FALSE}
+rm(contacted_before)
+```
+
+
+## previous
+
+Similarly, `previous` represent the number of contacts performed before this campaign and for this client. So we compare both variables:
+
+```{r}
+summary(bank_full$pdays) # 999 values
+bank_full %>% filter(pdays==999) %>% dim() %>% .[1]
+bank_full %>% filter(pdays==999) %>% dim() %>% .[1]/dim(bank_full)[1] #percentage
+bank_full %>% filter(previous==0) %>% dim() %>% .[1]
+bank_full %>% filter(previous==0) %>% dim() %>% .[1]/dim(bank_full)[1]
+```
+
+
+## Chi-square test
+
+We use chi-square tests to check if the distribution of the numeric variables is approximately normal. We checked all of them, but with the purpose of making this report shorter, we show only the ones that failed the hypothesis.
+
+```{r}
+chisq.test(bank_full$y, bank_full$housing, correct=FALSE)
+
+chisq.test(bank_full$y, bank_full$loan, correct=FALSE)
+```
+
+Both these variables have _p-value_ higher than 0.05, which was our threshold.
+
+## Selected and treated data for modeling
+
+```{r, warning=FALSE, message=FALSE, warning=FALSE}
+bank_full_2 <- bank_full %>% 
+  mutate(job = as.factor(job), marital = as.factor(marital), 
+         education = as.factor(education), contact = as.factor(contact), 
+         day_of_week = as.factor(day_of_week), poutcome = as.factor(poutcome)) %>% 
+  select(age, job, marital, education, contact, month, day_of_week, campaign, previous,
+         poutcome, emp.var.rate, cons.price.idx, cons.conf.idx, euribor3m, y)
+```
+
+# Results
+
+```{r}
+set.seed(123, sample.kind = "Rounding")
+index <- createDataPartition(bank_full_2$y, p=0.7, list=FALSE)
+train <- bank_full_2[-index,]
+test <- bank_full_2[index,]
+rm(index)
+```
+
+To make training possible, we turn the y variable to factors.
+
+```{r}
+train <- train %>% mutate(y = as.factor(y))
+```
+
+In this section, we will train three different models: Random Forest, Generalized Bossted Regression Modeling and Logistic Regression.
+
+## Random Forest
+```{r, warning=FALSE, message=FALSE}
+ctrl <- trainControl(method = "cv",number=5, classProbs = TRUE, summaryFunction = twoClassSummary)
+set.seed(123, sample.kind = "Rounding")
+fit_rf <- train(y ~ ., data = train, method = 'rf', ntree = 100, 
+                tuneGrid = data.frame(mtry = seq(1:7)), trControl= ctrl, metric='ROC')
+
+fit_rf$results$mtry[which.max(fit_rf$results$ROC)]
+
+rf_pred <- predict(fit_rf, test)
+
+roc_rf <- roc(response=as.ordered(rf_pred), predictor=as.ordered(test$y), auc=TRUE)
+roc_rf$auc
+```
+
+```{r, echo=FALSE}
+rm(rf_pred,roc_rf,fit_rf)
+```
+
+
+
+## Generalized Boosted Regression Modeling
+
+```{r, warning=FALSE, message=FALSE}
+set.seed(123, sample.kind = "Rounding")
+fit_gbm <- train(y ~ ., data = train, 
+                 method = "gbm", 
+                 trControl = ctrl,
+                 metric = "ROC",
+                 verbose = FALSE)
+
+gbm_pred <- predict(fit_gbm, test)
+
+roc_gbm <- roc(response=as.ordered(gbm_pred), predictor=as.ordered(test$y), auc=TRUE)
+roc_gbm$auc
+```
+
+```{r, echo=FALSE}
+rm(fit_gbm,gbm_pred,roc_gbm)
+```
+
+
+## Logistic Regression
+
+```{r, warning=FALSE, message=FALSE}
+set.seed(123, sample.kind = "Rounding")
+model <- glm(y ~ ., data = train, family = binomial)
+
+probabilities <- model %>% predict(test, type = "response")
+predicted.classes <- ifelse(probabilities > 0.5, "yes", "no")
+
+roc_glm <- roc(response=as.ordered(predicted.classes), predictor=as.ordered(test$y), auc=TRUE)
+roc_glm$auc
+```
+
+```{r, echo=FALSE}
+rm(model,probabilities,predicted.classes,roc_glm)
+```
+
+
+# Conclusion
+
+
+
+mama
+
+
+
